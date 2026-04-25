@@ -2,7 +2,7 @@ import { AbsoluteFill, Sequence } from "remotion";
 import { loadFont } from "@remotion/google-fonts/Montserrat";
 import { Background } from "./Background";
 import { Intro } from "./Intro";
-import { Showcase } from "./Showcase";
+import { Showcase, type Highlight } from "./Showcase";
 import { Outro } from "./Outro";
 
 loadFont("normal", {
@@ -11,99 +11,70 @@ loadFont("normal", {
 });
 
 const INTRO_FRAMES = 210;
-const SHOWCASE_FRAMES = 300;
+const SHOWCASE_FRAMES = 360;
 const OUTRO_FRAMES = 120;
 
 export const NODE_PLAY_TOTAL_FRAMES =
   INTRO_FRAMES + SHOWCASE_FRAMES * 2 + OUTRO_FRAMES;
 
-// Scene timing helpers: elements lift sequentially and stay raised until the
-// scene fades out. The Showcase uses appearAt for the lift-in, hideAt for the
-// fade-out (we set hideAt close to scene end so everything settles together).
-const SCENE_FADEOUT = 30;
-const sceneEnd = (frames: number) => frames - SCENE_FADEOUT;
-
-const mainHighlights = [
+// Highlight regions are in the SVG viewBox space (1914 x 855).
+const mainHighlights: Highlight[] = [
   {
-    x: 145,
-    y: 130,
-    w: 940,
-    h: 180,
+    x: 189,
+    y: 156,
+    w: 1144,
+    h: 202,
     label: "Активные серверы",
     caption:
-      "Запущенные серверы на одном экране — статус, IP-адрес, игроки.",
-    appearAt: 40,
-    hideAt: sceneEnd(300),
-    liftZ: 110,
-    nudgeX: 0,
-    nudgeY: -10,
+      "Все запущенные серверы на одном экране — статус, IP, игроки, быстрый запуск управления.",
   },
   {
-    x: 145,
-    y: 350,
-    w: 320,
-    h: 100,
+    x: 190,
+    y: 391,
+    w: 370,
+    h: 178,
     label: "Один клик до игры",
-    caption: "Разверни новый сервер из готового шаблона за пару секунд.",
-    appearAt: 95,
-    hideAt: sceneEnd(300),
-    liftZ: 80,
-    nudgeX: -16,
-    nudgeY: 8,
+    caption:
+      "Разверни новый сервер из готового шаблона за пару секунд — без терминала и конфигов.",
   },
   {
-    x: 145,
-    y: 480,
-    w: 1080,
-    h: 320,
+    x: 189,
+    y: 682,
+    w: 1144,
+    h: 173,
     label: "Каталог игр",
     caption:
-      "Сотни поддерживаемых игр. Запусти то, во что хочешь играть прямо сейчас.",
-    appearAt: 150,
-    hideAt: sceneEnd(300),
-    liftZ: 70,
-    nudgeX: 0,
-    nudgeY: 12,
+      "Сотни поддерживаемых игр — выбери проект и запусти его прямо отсюда.",
   },
 ];
 
-const overviewHighlights = [
+const overviewHighlights: Highlight[] = [
   {
-    x: 195,
-    y: 55,
-    w: 1390,
+    x: 211,
+    y: 38,
+    w: 1492,
     h: 50,
     label: "Метрики в реальном времени",
-    caption: "ОЗУ, ЦПУ, диск и сеть — всё видно сразу.",
-    appearAt: 40,
-    hideAt: sceneEnd(300),
-    liftZ: 100,
-    nudgeY: -16,
-  },
-  {
-    x: 170,
-    y: 160,
-    w: 200,
-    h: 540,
-    label: "Полный контроль",
     caption:
-      "Файлы, консоль, конфиг, бэкапы и расписания — всё на одной панели.",
-    appearAt: 100,
-    hideAt: sceneEnd(300),
-    liftZ: 90,
-    nudgeX: -18,
+      "ОЗУ, ЦПУ, диск и сеть всегда видно сверху — держи руку на пульсе сервера.",
   },
   {
-    x: 880,
-    y: 230,
-    w: 700,
-    h: 300,
+    x: 453,
+    y: 310,
+    w: 616,
+    h: 387,
+    label: "Информация о сервере",
+    caption:
+      "Адрес подключения, IP, порты, нода и регион — всё, что нужно игрокам, в одной карточке.",
+  },
+  {
+    x: 1085,
+    y: 310,
+    w: 616,
+    h: 387,
     label: "Производительность",
-    caption: "Графики нагрузки сервера в реальном времени без подключений.",
-    appearAt: 160,
-    hideAt: sceneEnd(300),
-    liftZ: 70,
-    nudgeX: 14,
+    caption:
+      "Графики нагрузки сервера в реальном времени, без подключения к консоли.",
   },
 ];
 
@@ -116,7 +87,7 @@ export const NodePlayPromo: React.FC = () => {
       </Sequence>
       <Sequence from={INTRO_FRAMES} durationInFrames={SHOWCASE_FRAMES}>
         <Showcase
-          src="assets/main.png"
+          src="assets/main.svg"
           title="Главная панель"
           subtitle="Все серверы под рукой"
           highlights={mainHighlights}
@@ -128,7 +99,7 @@ export const NodePlayPromo: React.FC = () => {
         durationInFrames={SHOWCASE_FRAMES}
       >
         <Showcase
-          src="assets/server-overview.png"
+          src="assets/server-overview.svg"
           title="Управление сервером"
           subtitle="Контроль каждой детали"
           highlights={overviewHighlights}

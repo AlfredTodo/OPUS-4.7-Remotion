@@ -1,45 +1,57 @@
 import {
   AbsoluteFill,
-  Img,
   interpolate,
-  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
-import { fluent, fluentEnter } from "./easings";
+import { fluent, fluentEnter, fluentExit } from "./easings";
+import mainSvg from "./_svg/main";
+import serverOverviewSvg from "./_svg/serverOverview";
 
-// Source screenshot intrinsic size (both screenshots are 1921x1080).
-const SCRN_W = 1921;
-const SCRN_H = 1080;
+const SVG_REGISTRY: Record<string, string> = {
+  "assets/main.svg": mainSvg,
+  "assets/server-overview.svg": serverOverviewSvg,
+};
 
-// Stage layout: panel laid in 3D, leaving room on the right for callouts.
-const CARD_TOP = 200;
-const CARD_LEFT_RATIO = 0.025;
-const CARD_WIDTH_RATIO = 0.62;
+// Source SVG intrinsic size (both panels are 1914x855).
+const SVG_W = 1914;
+const SVG_H = 855;
 
-// 3D stage tilt (subtle — readability first; 2D displacement + shadow does the
-// heavy lifting for the "exploded" feel).
-const TILT_X = 6; // deg
-const TILT_Y = -4; // deg
+// Layout: panel takes a wide block, captions live in the right rail.
+const PANEL_TOP = 170;
+const PANEL_LEFT = 56;
+const PANEL_RIGHT_RESERVED = 540; // space reserved on the right for captions
 
-// How far each element rises off the panel (screen pixels of upward shift).
-const DEFAULT_LIFT = 60;
+// Camera animation tuning
+const ZOOM_LEVEL = 1.55;
+const PAN_EASE_FRAMES = 26;
 
-type Highlight = {
-  // Coordinates in the original screenshot's pixel space (1921x1080).
+export type Highlight = {
+  // Coordinates in SVG viewBox space (1914 x 855).
   x: number;
   y: number;
   w: number;
   h: number;
   label: string;
   caption: string;
-  appearAt: number; // when this element starts lifting
-  hideAt: number; // when this element starts settling/exiting
-  // Optional: how high the element lifts off the panel
-  liftZ?: number;
-  // Optional small 2D nudge so floating elements don't overlap each other in screen space
-  nudgeX?: number;
-  nudgeY?: number;
+  // 0..1 anchor on the panel — used to position the focus center inside the
+  // viewport when zoomed; defaults to center of bbox.
+};
+
+type Stage =
+  | { kind: "settle" }
+  | { kind: "focus"; index: number; t: number }
+  | { kind: "transition"; from: number; to: number; t: number }
+  | { kind: "release" };
+
+const lookupSvg = (src: string): string => {
+  const found = SVG_REGISTRY[src];
+  if (!found) {
+    throw new Error(
+      `No embedded SVG found for src="${src}". Add it to SVG_REGISTRY in Showcase.tsx and re-run scripts/embed-svgs.mjs.`,
+    );
+  }
+  return found;
 };
 
 export const Showcase: React.FC<{
@@ -50,367 +62,344 @@ export const Showcase: React.FC<{
   durationInFrames: number;
 }> = ({ src, title, subtitle, highlights, durationInFrames }) => {
   const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
+  const { width } = useVideoConfig();
 
-  const cardW = width * CARD_WIDTH_RATIO;
-  const cardScale = cardW / SCRN_W;
-  const cardH = SCRN_H * cardScale;
-  const cardX = width * CARD_LEFT_RATIO;
-  const cardY = CARD_TOP;
+  const svgContent = lookupSvg(src);
 
-  const enterScale = interpolate(frame, [0, 36], [1.05, 1.0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const enterOpacity = interpolate(frame, [0, 28], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const enterBlur = interpolate(frame, [0, 28], [12, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const enterY = interpolate(frame, [0, 36], [60, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
+  // Panel layout (in screen pixels).
+  const panelW = width - PANEL_LEFT - PANEL_RIGHT_RESERVED;
+  const panelScale = panelW / SVG_W; // base scale to fit panel into card area
+  const panelH = SVG_H * panelScale;
+  const panelX = PANEL_LEFT;
+  const panelY = PANEL_TOP;
+
+  // Scene timing (frames are relative to this Sequence).
+  // Build a timeline: settle (intro) -> focus 0 -> focus 1 -> focus 2 -> release.
+  const total = highlights.length;
+  const ENTER = 36;
+  const SETTLE = 24;
+  const FOCUS_HOLD = Math.floor(
+    (durationInFrames - ENTER - SETTLE - 36 /* release */) / total - PAN_EASE_FRAMES
+  );
+
+  const stage = computeStage(frame, total, {
+    enter: ENTER,
+    settle: SETTLE,
+    focusHold: FOCUS_HOLD,
+    panEase: PAN_EASE_FRAMES,
+    durationInFrames,
   });
 
-  const outroOpacity = interpolate(
+  // Camera (scale + pan in panel pixel space).
+  const camera = computeCamera(stage, highlights, {
+    panelW,
+    panelH,
+    zoom: ZOOM_LEVEL,
+  });
+
+  // Entry / exit envelope on the whole scene.
+  const enterOpacity = interpolate(frame, [0, ENTER], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: fluentEnter,
+  });
+  const exitOpacity = interpolate(
     frame,
-    [durationInFrames - 28, durationInFrames],
+    [durationInFrames - 24, durationInFrames],
     [1, 0],
     {
       extrapolateLeft: "clamp",
       extrapolateRight: "clamp",
-      easing: fluentEnter,
+      easing: fluentExit,
     }
   );
-  const outroScale = interpolate(
-    frame,
-    [durationInFrames - 28, durationInFrames],
-    [1, 1.04],
-    {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-      easing: fluentEnter,
-    }
-  );
-
-  // Subtle Ken Burns drift (in video pixels)
-  const driftX = Math.sin(frame / 110) * 5;
-  const driftY = Math.cos(frame / 130) * 4;
+  const enterBlur = interpolate(frame, [0, ENTER], [14, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: fluentEnter,
+  });
+  const enterY = interpolate(frame, [0, ENTER], [60, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: fluentEnter,
+  });
 
   return (
     <AbsoluteFill
       style={{
-        opacity: enterOpacity * outroOpacity,
+        opacity: enterOpacity * exitOpacity,
         fontFamily: fluent.fontFamily,
-        perspective: "2600px",
-        perspectiveOrigin: "center center",
+        color: fluent.text,
       }}
     >
-      {/* Title block (top-left of video) */}
+      {/* Title block */}
       <div
         style={{
           position: "absolute",
-          left: cardX,
-          top: 60,
+          left: PANEL_LEFT,
+          top: 56,
           zIndex: 50,
           display: "flex",
           flexDirection: "column",
           gap: 10,
         }}
       >
-        <TitleReveal text={title} delay={20} />
-        <SubtitleReveal text={subtitle} delay={30} />
+        <TitleReveal text={title} delay={6} />
+        <SubtitleReveal text={subtitle} delay={18} />
       </div>
 
-      {/* 3D stage */}
+      {/* Panel viewport */}
       <div
         style={{
           position: "absolute",
-          left: cardX + driftX,
-          top: cardY + driftY + enterY,
-          width: cardW,
-          height: cardH,
-          transformStyle: "preserve-3d",
-          transform: `scale(${enterScale * outroScale}) rotateX(${TILT_X}deg) rotateY(${TILT_Y}deg)`,
-          transformOrigin: "center center",
+          left: panelX,
+          top: panelY + enterY,
+          width: panelW,
+          height: panelH,
+          borderRadius: 24,
+          overflow: "hidden",
+          boxShadow: `0 60px 120px rgba(0,0,0,0.55), 0 0 0 1px ${fluent.accent}33, 0 0 80px ${fluent.accent}22`,
+          background: "#14171B",
           filter: `blur(${enterBlur}px)`,
         }}
       >
-        {/* Base panel (the screenshot lying flat at z=0) */}
+        {/* Camera transform — moves and scales the SVG behind the viewport */}
         <div
           style={{
             position: "absolute",
-            inset: 0,
-            borderRadius: 22,
-            overflow: "hidden",
-            boxShadow: `0 60px 140px rgba(0,0,0,0.7), 0 0 0 1px ${fluent.accent}33`,
-            transform: "translateZ(0)",
+            left: 0,
+            top: 0,
+            width: panelW,
+            height: panelH,
+            transform: `translate(${camera.tx}px, ${camera.ty}px) scale(${camera.scale})`,
+            transformOrigin: "0 0",
           }}
         >
-          <Img
-            src={staticFile(src)}
-            style={{
-              width: cardW,
-              height: cardH,
-              display: "block",
-            }}
-          />
-          {/* Subtle desaturation on the base panel so lifted clones pop */}
           <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              background: "rgba(10, 8, 18, 0.18)",
-              pointerEvents: "none",
+            style={{ width: panelW, height: panelH }}
+            dangerouslySetInnerHTML={{
+              __html: prepareSvg(svgContent, panelW, panelH),
             }}
           />
-          {/* "Holes" on the base where lifted elements came from */}
+
+          {/* Highlight overlays — rendered in panel coordinates so they
+              transform with the camera. */}
           {highlights.map((h, i) => (
-            <BaseHole
-              key={`hole-${i}`}
+            <HighlightFrame
+              key={`hl-${i}`}
               highlight={h}
-              cardScale={cardScale}
+              index={i}
+              stage={stage}
+              panelScale={panelScale}
             />
           ))}
         </div>
 
-        {/* Floating element clones (cropped from screenshot, lifted up & out) */}
-        {highlights.map((h, i) => (
-          <FloatingElement
-            key={`fl-${i}`}
-            highlight={h}
-            src={src}
-            cardScale={cardScale}
-            cardW={cardW}
-            cardH={cardH}
-          />
-        ))}
+        {/* Vignette around the viewport for cinematic depth */}
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            boxShadow: "inset 0 0 140px rgba(0,0,0,0.55)",
+            borderRadius: 24,
+          }}
+        />
       </div>
 
-      {/* Callouts (2D screen space, right of stage; distributed into vertical slots) */}
-      {highlights.map((h, i) => (
-        <CalloutCard
-          key={`cl-${i}`}
-          highlight={h}
-          index={i}
-          total={highlights.length}
-          cardX={cardX}
-          cardW={cardW}
-          videoH={height}
-        />
-      ))}
+      {/* Caption rail (right column) */}
+      <div
+        style={{
+          position: "absolute",
+          left: panelX + panelW + 50,
+          top: panelY,
+          width: PANEL_RIGHT_RESERVED - 80,
+          height: panelH,
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          zIndex: 40,
+        }}
+      >
+        {highlights.map((h, i) => (
+          <CaptionCard
+            key={`cap-${i}`}
+            highlight={h}
+            index={i}
+            total={total}
+            stage={stage}
+          />
+        ))}
+
+        {/* Stage indicator (dots) */}
+        <StageIndicator stage={stage} total={total} />
+      </div>
     </AbsoluteFill>
   );
 };
 
-const BaseHole: React.FC<{
+// ---------------- Stage / camera computation ----------------
+
+const computeStage = (
+  frame: number,
+  total: number,
+  cfg: {
+    enter: number;
+    settle: number;
+    focusHold: number;
+    panEase: number;
+    durationInFrames: number;
+  }
+): Stage => {
+  const { enter, settle, focusHold, panEase, durationInFrames } = cfg;
+  const focusStart = enter + settle;
+  const focusBlock = panEase + focusHold; // pan into + hold
+
+  if (frame < focusStart) return { kind: "settle" };
+
+  const focusEnd = focusStart + total * focusBlock;
+  if (frame >= focusEnd) {
+    // Release back to overview before the scene fades.
+    if (frame >= durationInFrames - 24) return { kind: "release" };
+    return { kind: "release" };
+  }
+
+  // Determine which focus index we're in / transitioning into.
+  const local = frame - focusStart;
+  const idx = Math.floor(local / focusBlock);
+  const within = local - idx * focusBlock;
+  if (within < panEase) {
+    if (idx === 0) {
+      // Pan from settle (centered overview) to first focus.
+      return { kind: "transition", from: -1, to: 0, t: within / panEase };
+    }
+    return {
+      kind: "transition",
+      from: idx - 1,
+      to: idx,
+      t: within / panEase,
+    };
+  }
+  return { kind: "focus", index: idx, t: (within - panEase) / focusHold };
+};
+
+const clamp = (v: number, lo: number, hi: number) =>
+  Math.max(lo, Math.min(hi, v));
+
+const computeCamera = (
+  stage: Stage,
+  highlights: Highlight[],
+  cfg: { panelW: number; panelH: number; zoom: number }
+) => {
+  const { panelW, panelH, zoom } = cfg;
+  const overview = { tx: 0, ty: 0, scale: 1 };
+
+  const focusFor = (idx: number) => {
+    const h = highlights[idx];
+    if (!h) return overview;
+    const scaleX = panelW / SVG_W;
+    const cx = (h.x + h.w / 2) * scaleX;
+    const cy = (h.y + h.h / 2) * scaleX;
+    // We want the highlight center to land at viewport center, but clamp so
+    // the panel always fills the viewport (no empty letterboxing).
+    const minTx = panelW - panelW * zoom;
+    const minTy = panelH - panelH * zoom;
+    const tx = clamp(panelW / 2 - cx * zoom, minTx, 0);
+    const ty = clamp(panelH / 2 - cy * zoom, minTy, 0);
+    return { tx, ty, scale: zoom };
+  };
+
+  if (stage.kind === "settle") return overview;
+  if (stage.kind === "release") return overview;
+  if (stage.kind === "focus") return focusFor(stage.index);
+
+  // transition: ease between two focus targets (or from overview to first).
+  const from = stage.from === -1 ? overview : focusFor(stage.from);
+  const to = focusFor(stage.to);
+  const t = fluentEnter(stage.t);
+  return {
+    tx: from.tx + (to.tx - from.tx) * t,
+    ty: from.ty + (to.ty - from.ty) * t,
+    scale: from.scale + (to.scale - from.scale) * t,
+  };
+};
+
+// ---------------- Highlight frame ----------------
+
+const HighlightFrame: React.FC<{
   highlight: Highlight;
-  cardScale: number;
-}> = ({ highlight, cardScale }) => {
-  const frame = useCurrentFrame();
-  const local = frame - highlight.appearAt;
-  const exitLocal = frame - highlight.hideAt;
+  index: number;
+  stage: Stage;
+  panelScale: number;
+}> = ({ highlight, index, stage, panelScale }) => {
+  const visibility = highlightVisibility(stage, index);
+  if (visibility <= 0.001) return null;
 
-  const fadeIn = interpolate(local, [0, 30], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const fadeOut = interpolate(exitLocal, [0, 24], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const opacity = fadeIn * fadeOut;
-
-  const x = highlight.x * cardScale;
-  const y = highlight.y * cardScale;
-  const w = highlight.w * cardScale;
-  const h = highlight.h * cardScale;
+  const x = highlight.x * panelScale;
+  const y = highlight.y * panelScale;
+  const w = highlight.w * panelScale;
+  const h = highlight.h * panelScale;
 
   return (
     <div
       style={{
         position: "absolute",
-        left: x,
-        top: y,
-        width: w,
-        height: h,
+        left: x - 8,
+        top: y - 8,
+        width: w + 16,
+        height: h + 16,
         borderRadius: 14,
-        background:
-          "linear-gradient(160deg, rgba(8,6,14,0.97), rgba(14,10,20,0.99))",
-        boxShadow: `inset 0 12px 28px rgba(0,0,0,0.85), inset 0 0 0 1px ${fluent.accent}66, inset 0 -4px 16px ${fluent.accent}22`,
-        opacity,
+        border: `2px solid ${fluent.accent}`,
+        boxShadow: `0 0 0 1px rgba(255,255,255,0.08), 0 0 28px ${fluent.accent}aa, inset 0 0 0 1px rgba(255,255,255,0.06)`,
+        opacity: visibility,
         pointerEvents: "none",
       }}
     />
   );
 };
 
-const FloatingElement: React.FC<{
-  highlight: Highlight;
-  src: string;
-  cardScale: number;
-  cardW: number;
-  cardH: number;
-}> = ({ highlight, src, cardScale, cardW, cardH }) => {
-  const frame = useCurrentFrame();
-  const local = frame - highlight.appearAt;
-  const exitLocal = frame - highlight.hideAt;
-
-  const lift = interpolate(local, [0, 36], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const fadeIn = interpolate(local, [0, 18], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const fadeOut = interpolate(exitLocal, [0, 24], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const opacity = fadeIn * fadeOut;
-
-  const liftZ = highlight.liftZ ?? 140;
-  const tz = lift * liftZ;
-  // Visible upward displacement in screen space — this is what makes the
-  // floating element clearly "lifted off" the base.
-  const liftY = lift * DEFAULT_LIFT;
-  const scale = 1 + lift * 0.05;
-
-  // Offsets in screenshot pixel space, converted to card pixel space.
-  const x = highlight.x * cardScale;
-  const y = highlight.y * cardScale;
-  const w = highlight.w * cardScale;
-  const h = highlight.h * cardScale;
-
-  // Per-element 2D nudge so floating elements don't visually collide with each other
-  const nudgeX = (highlight.nudgeX ?? 0) * lift;
-  const nudgeY = (highlight.nudgeY ?? 0) * lift;
-
-  // Shadow grows with lift to simulate distance from the surface
-  const shadowSize = 40 + lift * 80;
-  const shadowOpacity = 0.45 + lift * 0.25;
-
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left: x + nudgeX,
-        top: y + nudgeY,
-        width: w,
-        height: h,
-        opacity,
-        transform: `translate3d(0, ${-liftY}px, ${tz}px) scale(${scale})`,
-        transformOrigin: "center center",
-        borderRadius: 14,
-        overflow: "hidden",
-        boxShadow: `
-          0 ${shadowSize * 0.55}px ${shadowSize}px rgba(0,0,0,${shadowOpacity}),
-          0 0 0 1px ${fluent.accentSoft}88,
-          0 0 ${shadowSize * 0.7}px ${fluent.accent}66
-        `,
-      }}
-    >
-      {/* Cropped clone of the screenshot showing only this region */}
-      <Img
-        src={staticFile(src)}
-        style={{
-          position: "absolute",
-          left: -x,
-          top: -y,
-          width: cardW,
-          height: cardH,
-          display: "block",
-          filter: "saturate(1.1) brightness(1.06)",
-        }}
-      />
-      {/* Subtle inner border highlight */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: 14,
-          border: `1px solid ${fluent.accentSoft}aa`,
-          pointerEvents: "none",
-        }}
-      />
-    </div>
-  );
+const highlightVisibility = (stage: Stage, index: number): number => {
+  if (stage.kind === "focus" && stage.index === index) return 1;
+  if (stage.kind === "transition") {
+    if (stage.to === index) return stage.t;
+    if (stage.from === index) return 1 - stage.t;
+  }
+  return 0;
 };
 
-const CalloutCard: React.FC<{
+// ---------------- Caption card ----------------
+
+const CaptionCard: React.FC<{
   highlight: Highlight;
   index: number;
   total: number;
-  cardX: number;
-  cardW: number;
-  videoH: number;
-}> = ({ highlight, index, total, cardX, cardW, videoH }) => {
-  const frame = useCurrentFrame();
-  const local = frame - highlight.appearAt;
-  const exitLocal = frame - highlight.hideAt;
-
-  const inOpacity = interpolate(local, [10, 36], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const outOpacity = interpolate(exitLocal, [0, 24], [1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-  const opacity = Math.min(inOpacity, outOpacity);
-
-  const ty = interpolate(local, [10, 40], [22, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: fluentEnter,
-  });
-
-  const calloutW = 460;
-  const calloutH = 220;
-  const gap = 28;
-  const stackTop = 200;
-  const stackHeight = total * calloutH + (total - 1) * gap;
-  const stackOffsetY = Math.max(stackTop, (videoH - stackHeight) / 2);
-
-  const calloutX = cardX + cardW + 70;
-  const calloutY = stackOffsetY + index * (calloutH + gap);
+  stage: Stage;
+}> = ({ highlight, index, stage }) => {
+  const v = captionVisibility(stage, index);
+  if (v <= 0.001) {
+    return null;
+  }
 
   return (
     <div
       style={{
         position: "absolute",
-        left: calloutX,
-        top: calloutY,
-        width: calloutW,
-        opacity,
-        transform: `translateY(${ty}px)`,
-        zIndex: 40,
+        left: 0,
+        right: 0,
+        top: "50%",
+        transform: `translateY(calc(-50% + ${(1 - v) * 24}px))`,
+        opacity: v,
         pointerEvents: "none",
       }}
     >
       <div
         style={{
-          padding: "26px 30px",
-          borderRadius: 20,
+          padding: "30px 34px",
+          borderRadius: 22,
           background:
-            "linear-gradient(160deg, rgba(40, 28, 70, 0.92), rgba(20, 18, 28, 0.96))",
+            "linear-gradient(160deg, rgba(40, 28, 78, 0.92), rgba(20, 18, 28, 0.96))",
           border: `1px solid ${fluent.accentSoft}55`,
-          boxShadow: `0 22px 48px rgba(0,0,0,0.55), 0 0 0 1px ${fluent.accent}22`,
+          boxShadow: `0 32px 70px rgba(0,0,0,0.55), 0 0 0 1px ${fluent.accent}22, 0 0 40px ${fluent.accent}33`,
           color: fluent.text,
           fontFamily: fluent.fontFamily,
         }}
@@ -422,17 +411,17 @@ const CalloutCard: React.FC<{
             textTransform: "uppercase",
             color: fluent.accentSoft,
             fontWeight: 700,
-            marginBottom: 12,
+            marginBottom: 14,
           }}
         >
           {`0${index + 1}`}
         </div>
         <div
           style={{
-            fontSize: 34,
+            fontSize: 38,
             fontWeight: 700,
             lineHeight: 1.1,
-            marginBottom: 12,
+            marginBottom: 14,
             letterSpacing: -0.6,
           }}
         >
@@ -440,10 +429,10 @@ const CalloutCard: React.FC<{
         </div>
         <div
           style={{
-            fontSize: 19,
+            fontSize: 20,
             fontWeight: 400,
             color: fluent.textMuted,
-            lineHeight: 1.45,
+            lineHeight: 1.5,
           }}
         >
           {highlight.caption}
@@ -453,23 +442,78 @@ const CalloutCard: React.FC<{
   );
 };
 
+const captionVisibility = (stage: Stage, index: number): number => {
+  if (stage.kind === "focus" && stage.index === index) {
+    // gentle fade-in/out within focus hold
+    return 1;
+  }
+  if (stage.kind === "transition") {
+    if (stage.to === index) return Math.min(1, stage.t * 1.1);
+    if (stage.from === index) return Math.max(0, 1 - stage.t * 1.1);
+  }
+  return 0;
+};
+
+// ---------------- Stage indicator ----------------
+
+const StageIndicator: React.FC<{ stage: Stage; total: number }> = ({
+  stage,
+  total,
+}) => {
+  const activeIndex = (() => {
+    if (stage.kind === "focus") return stage.index;
+    if (stage.kind === "transition") return stage.t > 0.5 ? stage.to : stage.from;
+    return -1;
+  })();
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        display: "flex",
+        gap: 12,
+        justifyContent: "flex-start",
+      }}
+    >
+      {Array.from({ length: total }).map((_, i) => (
+        <div
+          key={i}
+          style={{
+            width: i === activeIndex ? 36 : 14,
+            height: 6,
+            borderRadius: 999,
+            background:
+              i === activeIndex ? fluent.accent : "rgba(255,255,255,0.18)",
+            transition: "all 0.2s",
+          }}
+        />
+      ))}
+    </div>
+  );
+};
+
+// ---------------- Title / subtitle reveals ----------------
+
 const TitleReveal: React.FC<{ text: string; delay: number }> = ({
   text,
   delay,
 }) => {
   const frame = useCurrentFrame();
   const local = frame - delay;
-  const opacity = interpolate(local, [0, 24], [0, 1], {
+  const opacity = interpolate(local, [0, 26], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: fluentEnter,
   });
-  const ty = interpolate(local, [0, 28], [16, 0], {
+  const ty = interpolate(local, [0, 30], [18, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: fluentEnter,
   });
-  const blur = interpolate(local, [0, 24], [10, 0], {
+  const blur = interpolate(local, [0, 26], [10, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: fluentEnter,
@@ -483,7 +527,7 @@ const TitleReveal: React.FC<{ text: string; delay: number }> = ({
         fontSize: 64,
         fontWeight: 800,
         color: fluent.text,
-        letterSpacing: -1.2,
+        letterSpacing: -1.4,
         lineHeight: 1,
       }}
     >
@@ -523,4 +567,21 @@ const SubtitleReveal: React.FC<{ text: string; delay: number }> = ({
       {text}
     </div>
   );
+};
+
+// ---------------- SVG preparation ----------------
+
+// Replace the root <svg> width/height/preserveAspectRatio so it scales nicely
+// inside the camera viewport.
+const prepareSvg = (svg: string, w: number, h: number) => {
+  return svg
+    .replace(
+      /<svg([^>]*?)\swidth="[^"]*"/,
+      `<svg$1 width="${w}"`
+    )
+    .replace(/<svg([^>]*?)\sheight="[^"]*"/, `<svg$1 height="${h}"`)
+    .replace(
+      /<svg([^>]*?)>/,
+      `<svg$1 preserveAspectRatio="xMidYMid meet" style="display:block">`
+    );
 };
