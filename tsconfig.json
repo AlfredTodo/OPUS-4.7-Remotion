@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2018",
+    "module": "commonjs",
+    "jsx": "react-jsx",
+    "outDir": "./dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "noImplicitAny": true,
+    "noEmit": true,
+    "moduleResolution": "node",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "skipLibCheck": true,
+    "incremental": true
+  },
+  "include": ["src/**/*", "remotion.config.ts"]
+}

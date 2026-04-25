@@ -1,0 +1,9 @@
+node_modules
+.DS_Store
+.cache
+out
+build
+dist
+.env
+*.log
+tsconfig.tsbuildinfo
