@@ -6,7 +6,7 @@ import { Showcase } from "./Showcase";
 import { Outro } from "./Outro";
 
 loadFont("normal", {
-  weights: ["400", "500", "700", "800"],
+  weights: ["400", "500", "600", "700", "800"],
   subsets: ["latin", "latin-ext", "cyrillic"],
 });
 
@@ -17,6 +17,12 @@ const OUTRO_FRAMES = 120;
 export const NODE_PLAY_TOTAL_FRAMES =
   INTRO_FRAMES + SHOWCASE_FRAMES * 2 + OUTRO_FRAMES;
 
+// Scene timing helpers: elements lift sequentially and stay raised until the
+// scene fades out. The Showcase uses appearAt for the lift-in, hideAt for the
+// fade-out (we set hideAt close to scene end so everything settles together).
+const SCENE_FADEOUT = 30;
+const sceneEnd = (frames: number) => frames - SCENE_FADEOUT;
+
 const mainHighlights = [
   {
     x: 145,
@@ -26,9 +32,11 @@ const mainHighlights = [
     label: "Активные серверы",
     caption:
       "Запущенные серверы на одном экране — статус, IP-адрес, игроки.",
-    appearAt: 60,
-    hideAt: 130,
-    side: "right" as const,
+    appearAt: 40,
+    hideAt: sceneEnd(300),
+    liftZ: 110,
+    nudgeX: 0,
+    nudgeY: -10,
   },
   {
     x: 145,
@@ -36,23 +44,26 @@ const mainHighlights = [
     w: 320,
     h: 100,
     label: "Один клик до игры",
-    caption:
-      "Разверни новый сервер из готового шаблона за пару секунд.",
-    appearAt: 130,
-    hideAt: 200,
-    side: "right" as const,
+    caption: "Разверни новый сервер из готового шаблона за пару секунд.",
+    appearAt: 95,
+    hideAt: sceneEnd(300),
+    liftZ: 80,
+    nudgeX: -16,
+    nudgeY: 8,
   },
   {
     x: 145,
     y: 480,
-    w: 1450,
-    h: 460,
+    w: 1080,
+    h: 320,
     label: "Каталог игр",
     caption:
       "Сотни поддерживаемых игр. Запусти то, во что хочешь играть прямо сейчас.",
-    appearAt: 200,
-    hideAt: 280,
-    side: "top" as const,
+    appearAt: 150,
+    hideAt: sceneEnd(300),
+    liftZ: 70,
+    nudgeX: 0,
+    nudgeY: 12,
   },
 ];
 
@@ -64,9 +75,10 @@ const overviewHighlights = [
     h: 50,
     label: "Метрики в реальном времени",
     caption: "ОЗУ, ЦПУ, диск и сеть — всё видно сразу.",
-    appearAt: 60,
-    hideAt: 130,
-    side: "bottom" as const,
+    appearAt: 40,
+    hideAt: sceneEnd(300),
+    liftZ: 100,
+    nudgeY: -16,
   },
   {
     x: 170,
@@ -76,9 +88,10 @@ const overviewHighlights = [
     label: "Полный контроль",
     caption:
       "Файлы, консоль, конфиг, бэкапы и расписания — всё на одной панели.",
-    appearAt: 130,
-    hideAt: 220,
-    side: "right" as const,
+    appearAt: 100,
+    hideAt: sceneEnd(300),
+    liftZ: 90,
+    nudgeX: -18,
   },
   {
     x: 880,
@@ -87,9 +100,10 @@ const overviewHighlights = [
     h: 300,
     label: "Производительность",
     caption: "Графики нагрузки сервера в реальном времени без подключений.",
-    appearAt: 220,
-    hideAt: 290,
-    side: "left" as const,
+    appearAt: 160,
+    hideAt: sceneEnd(300),
+    liftZ: 70,
+    nudgeX: 14,
   },
 ];
 
