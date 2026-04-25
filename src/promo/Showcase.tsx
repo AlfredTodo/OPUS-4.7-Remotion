@@ -20,11 +20,14 @@ const SVG_H = 855;
 // Layout: panel takes a wide block, captions live in the right rail.
 const PANEL_TOP = 170;
 const PANEL_LEFT = 56;
-const PANEL_RIGHT_RESERVED = 540; // space reserved on the right for captions
+const PANEL_RIGHT_RESERVED = 620; // space reserved on the right for captions
 
 // Camera animation tuning
-const ZOOM_LEVEL = 1.55;
-const PAN_EASE_FRAMES = 26;
+const ZOOM_LEVEL = 1.6;
+const PAN_EASE_FRAMES = 28;
+// Slow Ken-Burns drift while a focus is held — gives the camera life.
+const DRIFT_PX = 14;
+const DRIFT_SCALE = 0.025;
 
 export type Highlight = {
   // Coordinates in SVG viewBox space (1914 x 855).
@@ -95,6 +98,7 @@ export const Showcase: React.FC<{
     panelW,
     panelH,
     zoom: ZOOM_LEVEL,
+    frame,
   });
 
   // Entry / exit envelope on the whole scene.
@@ -158,7 +162,7 @@ export const Showcase: React.FC<{
           height: panelH,
           borderRadius: 24,
           overflow: "hidden",
-          boxShadow: `0 60px 120px rgba(0,0,0,0.55), 0 0 0 1px ${fluent.accent}33, 0 0 80px ${fluent.accent}22`,
+          boxShadow: `0 60px 120px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08)`,
           background: "#14171B",
           filter: `blur(${enterBlur}px)`,
         }}
@@ -191,6 +195,7 @@ export const Showcase: React.FC<{
               index={i}
               stage={stage}
               panelScale={panelScale}
+              frame={frame}
             />
           ))}
         </div>
@@ -289,9 +294,18 @@ const clamp = (v: number, lo: number, hi: number) =>
 const computeCamera = (
   stage: Stage,
   highlights: Highlight[],
-  cfg: { panelW: number; panelH: number; zoom: number }
+  cfg: { panelW: number; panelH: number; zoom: number; frame: number }
 ) => {
-  const { panelW, panelH, zoom } = cfg;
+  const { panelW, panelH, zoom, frame } = cfg;
+
+  // Subtle continuous Ken-Burns drift on top of every camera target so the
+  // camera never feels frozen. Different periods on x/y avoid a simple loop.
+  const driftX = Math.sin(frame / 90) * DRIFT_PX;
+  const driftY = Math.cos(frame / 110) * DRIFT_PX * 0.7;
+  const driftS = 1 + Math.sin(frame / 140) * DRIFT_SCALE;
+
+  // The overview slowly pushes in slightly (8%) — feels like “living”.
+  const settlePush = 1 + 0.08;
   const overview = { tx: 0, ty: 0, scale: 1 };
 
   const focusFor = (idx: number) => {
@@ -300,21 +314,31 @@ const computeCamera = (
     const scaleX = panelW / SVG_W;
     const cx = (h.x + h.w / 2) * scaleX;
     const cy = (h.y + h.h / 2) * scaleX;
+    const effZoom = zoom * driftS;
     // We want the highlight center to land at viewport center, but clamp so
     // the panel always fills the viewport (no empty letterboxing).
-    const minTx = panelW - panelW * zoom;
-    const minTy = panelH - panelH * zoom;
-    const tx = clamp(panelW / 2 - cx * zoom, minTx, 0);
-    const ty = clamp(panelH / 2 - cy * zoom, minTy, 0);
-    return { tx, ty, scale: zoom };
+    const minTx = panelW - panelW * effZoom;
+    const minTy = panelH - panelH * effZoom;
+    const tx = clamp(panelW / 2 - cx * effZoom + driftX, minTx, 0);
+    const ty = clamp(panelH / 2 - cy * effZoom + driftY, minTy, 0);
+    return { tx, ty, scale: effZoom };
   };
 
-  if (stage.kind === "settle") return overview;
-  if (stage.kind === "release") return overview;
+  const overviewLive = (push = settlePush) => {
+    const effZoom = push * driftS;
+    const minTx = panelW - panelW * effZoom;
+    const minTy = panelH - panelH * effZoom;
+    const tx = clamp(panelW / 2 - (panelW / 2) * effZoom + driftX, minTx, 0);
+    const ty = clamp(panelH / 2 - (panelH / 2) * effZoom + driftY, minTy, 0);
+    return { tx, ty, scale: effZoom };
+  };
+
+  if (stage.kind === "settle") return overviewLive();
+  if (stage.kind === "release") return overviewLive();
   if (stage.kind === "focus") return focusFor(stage.index);
 
   // transition: ease between two focus targets (or from overview to first).
-  const from = stage.from === -1 ? overview : focusFor(stage.from);
+  const from = stage.from === -1 ? overviewLive() : focusFor(stage.from);
   const to = focusFor(stage.to);
   const t = fluentEnter(stage.t);
   return {
@@ -331,7 +355,8 @@ const HighlightFrame: React.FC<{
   index: number;
   stage: Stage;
   panelScale: number;
-}> = ({ highlight, index, stage, panelScale }) => {
+  frame: number;
+}> = ({ highlight, index, stage, panelScale, frame }) => {
   const visibility = highlightVisibility(stage, index);
   if (visibility <= 0.001) return null;
 
@@ -340,18 +365,33 @@ const HighlightFrame: React.FC<{
   const w = highlight.w * panelScale;
   const h = highlight.h * panelScale;
 
+  // Pulsing glow on the focused highlight only.
+  const isFocused = stage.kind === "focus" && stage.index === index;
+  const pulse = isFocused
+    ? 0.85 + 0.15 * Math.sin(frame / 6)
+    : 0.6;
+  // Reveal-in scale on first appearance.
+  const reveal = visibility;
+  const expand = 1 + (1 - reveal) * 0.06;
+
   return (
     <div
       style={{
         position: "absolute",
-        left: x - 8,
-        top: y - 8,
-        width: w + 16,
-        height: h + 16,
-        borderRadius: 14,
-        border: `2px solid ${fluent.accent}`,
-        boxShadow: `0 0 0 1px rgba(255,255,255,0.08), 0 0 28px ${fluent.accent}aa, inset 0 0 0 1px rgba(255,255,255,0.06)`,
-        opacity: visibility,
+        left: x - 5,
+        top: y - 5,
+        width: w + 10,
+        height: h + 10,
+        borderRadius: 10,
+        border: `4px solid #B594FF`,
+        boxShadow: `
+          inset 0 0 0 1px rgba(255,255,255,0.35),
+          0 0 ${8 + 8 * pulse}px ${fluent.accent}cc,
+          0 0 ${22 + 14 * pulse}px ${fluent.accent}55
+        `,
+        opacity: reveal,
+        transform: `scale(${expand})`,
+        transformOrigin: "center center",
         pointerEvents: "none",
       }}
     />
@@ -380,6 +420,11 @@ const CaptionCard: React.FC<{
     return null;
   }
 
+  // More expressive entrance: slide-up + scale + slight reveal blur.
+  const slide = (1 - v) * 36;
+  const scale = 0.96 + v * 0.04;
+  const blur = (1 - v) * 6;
+
   return (
     <div
       style={{
@@ -387,23 +432,40 @@ const CaptionCard: React.FC<{
         left: 0,
         right: 0,
         top: "50%",
-        transform: `translateY(calc(-50% + ${(1 - v) * 24}px))`,
+        transform: `translateY(calc(-50% + ${slide}px)) scale(${scale})`,
         opacity: v,
+        filter: `blur(${blur}px)`,
         pointerEvents: "none",
+        transformOrigin: "left center",
       }}
     >
       <div
         style={{
-          padding: "30px 34px",
-          borderRadius: 22,
+          padding: "32px 36px",
+          borderRadius: 24,
           background:
-            "linear-gradient(160deg, rgba(40, 28, 78, 0.92), rgba(20, 18, 28, 0.96))",
+            "linear-gradient(160deg, rgba(46, 30, 92, 0.92), rgba(22, 18, 32, 0.96))",
           border: `1px solid ${fluent.accentSoft}55`,
-          boxShadow: `0 32px 70px rgba(0,0,0,0.55), 0 0 0 1px ${fluent.accent}22, 0 0 40px ${fluent.accent}33`,
+          boxShadow: `0 36px 80px rgba(0,0,0,0.55), 0 0 0 1px ${fluent.accent}22, 0 0 50px ${fluent.accent}33`,
           color: fluent.text,
           fontFamily: fluent.fontFamily,
+          position: "relative",
+          overflow: "hidden",
         }}
       >
+        {/* Decorative accent bar on the left */}
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 22,
+            bottom: 22,
+            width: 4,
+            borderRadius: 2,
+            background: `linear-gradient(180deg, ${fluent.accent}, ${fluent.accentSoft})`,
+            boxShadow: `0 0 18px ${fluent.accent}aa`,
+          }}
+        />
         <div
           style={{
             fontSize: 14,
@@ -418,18 +480,20 @@ const CaptionCard: React.FC<{
         </div>
         <div
           style={{
-            fontSize: 38,
+            fontSize: 34,
             fontWeight: 700,
-            lineHeight: 1.1,
+            lineHeight: 1.08,
             marginBottom: 14,
-            letterSpacing: -0.6,
+            letterSpacing: -0.8,
+            wordBreak: "break-word",
+            hyphens: "auto",
           }}
         >
           {highlight.label}
         </div>
         <div
           style={{
-            fontSize: 20,
+            fontSize: 19,
             fontWeight: 400,
             color: fluent.textMuted,
             lineHeight: 1.5,
@@ -444,12 +508,12 @@ const CaptionCard: React.FC<{
 
 const captionVisibility = (stage: Stage, index: number): number => {
   if (stage.kind === "focus" && stage.index === index) {
-    // gentle fade-in/out within focus hold
     return 1;
   }
   if (stage.kind === "transition") {
-    if (stage.to === index) return Math.min(1, stage.t * 1.1);
-    if (stage.from === index) return Math.max(0, 1 - stage.t * 1.1);
+    // Snappier crossfade so the new caption arrives quickly.
+    if (stage.to === index) return clamp(stage.t * 1.4, 0, 1);
+    if (stage.from === index) return clamp(1 - stage.t * 1.6, 0, 1);
   }
   return 0;
 };

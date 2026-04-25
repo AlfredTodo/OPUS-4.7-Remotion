@@ -50,10 +50,10 @@ const mainHighlights: Highlight[] = [
 
 const overviewHighlights: Highlight[] = [
   {
-    x: 211,
-    y: 38,
-    w: 1492,
-    h: 50,
+    x: 200,
+    y: 76,
+    w: 1518,
+    h: 38,
     label: "Метрики в реальном времени",
     caption:
       "ОЗУ, ЦПУ, диск и сеть всегда видно сверху — держи руку на пульсе сервера.",
