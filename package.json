@@ -1,17 +1,19 @@
 {
   "name": "opus-4-7-remotion",
   "version": "1.0.0",
-  "description": "Simple Remotion animation",
+  "description": "NodePlay kinetic promo — Microsoft Design style",
   "scripts": {
     "start": "remotion studio",
     "build": "remotion render",
     "upgrade": "remotion upgrade",
-    "test": "remotion lambda render --help >/dev/null"
+    "test": "remotion lambda render --help >/dev/null",
+    "embed-svgs": "node scripts/embed-svgs.mjs"
   },
   "repository": {},
   "license": "UNLICENSED",
   "dependencies": {
     "@remotion/cli": "4.0.380",
+    "@remotion/google-fonts": "4.0.380",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "remotion": "4.0.380"
